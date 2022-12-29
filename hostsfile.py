@@ -2,7 +2,7 @@
 
 from __future__ import print_function, unicode_literals
 from PyInquirer import prompt
-from typing import List, Dict
+from typing import List,Dict
 from rich.console import Console
 
 import argparse
@@ -23,10 +23,6 @@ class Hosts():
 
 
     def __privilege_escalation__(self) -> None:
-        """
-        Check if the script is ran with administrator privilleges and elevate
-        if it's not
-        """
         if os.geteuid() != 0:
             subprocess.call(['sudo', 'python3', *sys.argv])
             sys.exit()
@@ -40,13 +36,32 @@ class Hosts():
                 line_no+=1
                 if re.search("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}", line) and "#!" in line:
                     components = re.split("\\s", line)
-                    hosts[components[1]] = {
-                        "ip_addr": components[0],
-                        "line_no": line_no,
-                        "addition": "automatic" if "#!" in line else "manual",
-                    }
+                    hosts[components[1]] = { "ip_addr": components[0], "line_no": line_no }
         return hosts
 
+
+    def append_to_file(self, ip_addr: str, domain: str) -> None:
+        with open(self.HOSTSFILE_PATH, "a") as hostsfile:
+            hostsfile.write(f"{ip_addr}\t{domain}\t{self.ADDITION_MARKER}\n")
+        self.console.print("\nInsertion details:", style="bold green")
+        self.console.print(f"Domain name: [b]{domain}[/b]\nIP Address: {ip_addr}")
+
+
+    def remove_from_file(self, marked_lines: List, removal_info: List) -> None:
+        with open(self.HOSTSFILE_PATH,'r') as read_file:
+            lines = read_file.readlines()
+        current_line = 1
+        with open(self.HOSTSFILE_PATH,'w') as write_file:
+            for line in lines:
+                if current_line not in marked_lines:
+                    write_file.write(line)
+                else:
+                    pass
+                current_line += 1
+        self.console.print("\nRemoval details:", style="bold green")
+        self.console.print(f"Domain names: [b]{[i['domain'] for i in removal_info]}[/b]")
+        self.console.print(f"IP Address: {[i['ip_addr'] for i in removal_info ]}")
+            
 
     def insert(self, domain="", ip_addr="", interactive=True) -> None:
         if interactive:
@@ -64,16 +79,9 @@ class Hosts():
                 },
             ]
             answer = prompt(questions)
-
-            with open(self.HOSTSFILE_PATH, "a") as hostsfile:
-                hostsfile.write(f"{answer['ip_addr']}\t{answer['domain']}\t{self.ADDITION_MARKER}\n")
-                self.console.print("Insertion details:\n", style="bold green")
-                self.console.print(f"Domain name: [b]{answer['domain']}[/b]\nIP Address: {answer['ip_addr']}")
+            self.append_to_file(answer['ip_addr'], answer['domain'])
         else:
-            with open(self.HOSTSFILE_PATH, "a") as hostsfile:
-                hostsfile.write(f"{ip_addr}\t{domain}\t{self.ADDITION_MARKER}\n")
-                self.console.print("Insertion details:\n", style="bold green")
-                self.console.print(f"Domain name: [b]{domain}[/b]\nIP Address: {ip_addr}")
+            self.append_to_file(ip_addr, domain)
 
 
     def remove(self, marker="", interactive=True) -> None:
@@ -90,70 +98,40 @@ class Hosts():
             answers = prompt(questions)
 
             marked_lines = []
-            marked_domains = []
+            removal_info = []
             for answer in answers.values():
                 for domain in answer:
-                    if options[domain]["addition"] == "automatic":
-                        marked_lines.append(options[domain]["line_no"])
-                        marked_domains.append((domain, options[domain]["ip_addr"]))
+                    marked_lines.append(options[domain]["line_no"])
+                    removal_info.append({"domain":domain, "ip_addr": options[domain]["ip_addr"]})
+            self.remove_from_file(marked_lines, removal_info)
 
-            with open(self.HOSTSFILE_PATH,'r') as read_file:
-                lines = read_file.readlines()
-            current_line = 1
-
-            with open(self.HOSTSFILE_PATH,'w') as write_file:
-                for line in lines:
-                    if current_line not in marked_lines:
-                        write_file.write(line)
-                    else:
-                        pass
-                    current_line += 1
-            self.console.print("Removal details:\n", style="bold green")
-            for pair in marked_domains:
-                self.console.print(f"Domain names: [b]{pair[0]}[/b]\nIP Address: {pair[1]}")
         elif options: 
-            marked_line = 9_999_999
-            marked_domain = ("","")
+            marked_lines = []
+            domain = ""
+            ip_addr = ""
             if is_ip_address(marker):
                 for domain in options:
                     if options[domain]["ip_addr"] == marker:
-                        marked_line = options[marker]["line_no"]
-                        marked_domain = (domain, options[marker]["ip_addr"])
+                        marked_lines = [options[marker]["line_no"]]
+                        (domain, ip_addr) = (domain, options[marker]["ip_addr"])
             else:
-                marked_line = options[marker]["line_no"]
-                marked_domain = (marker, options[marker]["ip_addr"])
+                marked_lines = [options[marker]["line_no"]]
+                (domain, ip_addr) = (marker, options[marker]["ip_addr"])
 
-            with open(self.HOSTSFILE_PATH,'r') as read_file:
-                lines = read_file.readlines()
+            self.remove_from_file(marked_lines, [{"domain": domain, "ip_addr": ip_addr}])
 
-            current_line = 1
-            with open(self.HOSTSFILE_PATH,'w') as write_file:
-                for line in lines:
-                    if current_line != marked_line:
-                        write_file.write(line)
-                    else:
-                        pass
-                    current_line += 1
-            self.console.print("Removal details:\n", style="bold green")
-            self.console.print(f"Domain names: [b]{marked_domain[0]}[/b]\nIP Address: {marked_domain[1]}")
         else:
-            self.console.print("No custom entries found")
+            self.console.print("No custom entries found", style="bold yellow")
 
 
     def clean(self):
+        domains = self.read()
         marked_lines = [ domain["line_no"] for domain in self.read().values() ]
-        marked_domains = [ domain for domain in self.read().keys() ]
-        with open(self.HOSTSFILE_PATH,'r') as read_file:
-            lines = read_file.readlines()
-        current_line = 1
-        with open(self.HOSTSFILE_PATH,'w') as write_file:
-            for line in lines:
-                if current_line not in marked_lines:
-                    write_file.write(line)
-                else:
-                    pass
-                current_line += 1
-        self.console.print(f"Deleted entries: {marked_domains}")
+        removal_info = []
+        for domain in domains:
+            removal_info.append({"domain": domain, "ip_addr": domains[domain]["ip_addr"]})
+            
+        self.remove_from_file(marked_lines,removal_info)
 
 
 def is_ip_address(ip_addr:str) -> bool:
